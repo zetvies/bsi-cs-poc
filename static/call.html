@@ -139,7 +139,7 @@
         <option value="free">Free</option>
       </select>
       <button class="start-btn" id="startCallBtn">Mulai Panggilan</button>
-      <a href="/static/dashboard.html" target="_blank" style="margin-top:18px;color:#4ee6d8;text-decoration:underline;font-size:1rem;">Lihat Ringkasan (Summary)</a>
+      <a href="/" target="_blank" style="margin-top:18px;color:#4ee6d8;text-decoration:underline;font-size:1rem;">Lihat Ringkasan (Summary)</a>
     </div>
   </div>
   <div class="center-box" id="callUI" style="display:none;">
@@ -189,7 +189,7 @@
       Akhiri Panggilan
     </button>
     <div id="summaryLink" style="display:none;margin-top:24px;">
-      <a href="/static/dashboard.html" target="_blank" style="color:#4ee6d8;text-decoration:underline;font-size:1rem;">Lihat Ringkasan (Summary)</a>
+      <a href="/" target="_blank" style="color:#4ee6d8;text-decoration:underline;font-size:1rem;">Lihat Ringkasan (Summary)</a>
     </div>
   </div>
   <div id="connectingMsg" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:9;display:flex;align-items:center;justify-content:center;background:rgba(35,39,47,0.98);color:#4ee6d8;font-size:1.3rem;font-weight:600;letter-spacing:0.01em;">
@@ -321,7 +321,7 @@
       callActive = false;
       summaryLink.style.display = 'block';
       callUI.style.display = 'none';
-      setTimeout(() => { window.location.href = '/static/dashboard.html'; }, 800);
+      setTimeout(() => { window.location.href = '/'; }, 800);
     };
   </script>
 </body>

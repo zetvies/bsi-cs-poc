@@ -15,8 +15,8 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
-from pipecat_ai_small_webrtc_prebuilt.frontend import SmallWebRTCPrebuiltUI
 
 from bot_webrtc_clean import run_bot
 from pipecat.transports.network.webrtc_connection import IceServer, SmallWebRTCConnection
@@ -34,8 +34,8 @@ ice_servers = [
     )
 ]
 
-# Mount the frontend at /client
-app.mount("/client", SmallWebRTCPrebuiltUI)
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/", include_in_schema=False)
@@ -52,27 +52,27 @@ async def root_redirect():
         <body>
             <h1>BSI Syariah Dashboard</h1>
             <p>Summary dashboard not found.</p>
-            <p><a href="/client/">Go to Voice Chat</a></p>
+            <p><a href="/call">Go to Voice Chat</a></p>
         </body>
         </html>
         """)
 
 
-@app.get("/mic-test", include_in_schema=False)
-async def mic_test():
-    """Serve the microphone test page"""
+@app.get("/call", include_in_schema=False)
+async def call_page():
+    """Serve the call page"""
     from pathlib import Path
-    mic_test_file = Path(__file__).parent / "static" / "mic_test.html"
-    if mic_test_file.exists():
-        return HTMLResponse(content=mic_test_file.read_text(), media_type="text/html")
+    call_file = Path(__file__).parent / "static" / "call.html"
+    if call_file.exists():
+        return HTMLResponse(content=call_file.read_text(), media_type="text/html")
     else:
         return HTMLResponse(content="""
         <html>
-        <head><title>Microphone Test</title></head>
+        <head><title>BSI Syariah Call</title></head>
         <body>
-            <h1>Microphone Test</h1>
-            <p>Microphone test page not found.</p>
-            <p><a href="/client/">Go to Voice Chat</a></p>
+            <h1>BSI Syariah Call</h1>
+            <p>Call page not found.</p>
+            <p><a href="/">Go to Dashboard</a></p>
         </body>
         </html>
         """)
