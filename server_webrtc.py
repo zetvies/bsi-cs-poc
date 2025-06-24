@@ -38,6 +38,13 @@ ice_servers = [
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Set default values on startup"""
+    if not hasattr(app.state, 'testing'):
+        app.state.testing = False
+
+
 @app.get("/", include_in_schema=False)
 async def root_redirect():
     """Serve the summary dashboard by default"""
@@ -100,7 +107,7 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
             pcs_map.pop(webrtc_connection.pc_id, None)
 
         # Run bot function with SmallWebRTC connection
-        background_tasks.add_task(run_bot, pipecat_connection, app.state.testing)
+        background_tasks.add_task(run_bot, pipecat_connection, getattr(app.state, 'testing', False))
 
     answer = pipecat_connection.get_answer()
     # Updating the peer connection inside the map
