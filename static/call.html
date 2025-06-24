@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BSI Syariah Voice Call</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #23272f;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    .center-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+    }
+    .waveform {
+      width: 340px;
+      height: 120px;
+      margin-bottom: 40px;
+      display: block;
+    }
+    .call-btn {
+      display: flex;
+      align-items: center;
+      background: #2d323c;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 16px 32px;
+      font-size: 1.1rem;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+      transition: background 0.2s;
+    }
+    .call-btn:hover {
+      background: #363b47;
+    }
+    .pause-icon {
+      width: 22px;
+      height: 22px;
+      margin-right: 16px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    /* Pre-call overlay */
+    .precall-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(35, 39, 47, 0.98);
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.3s;
+    }
+    .precall-box {
+      background: #23272f;
+      border-radius: 18px;
+      box-shadow: 0 2px 24px rgba(0,0,0,0.18);
+      padding: 40px 32px 32px 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 320px;
+    }
+    .precall-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+      letter-spacing: 0.01em;
+    }
+    .mode-picker {
+      font-size: 1.1rem;
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: none;
+      margin-bottom: 28px;
+      background: #2d323c;
+      color: #fff;
+      outline: none;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .start-btn {
+      background: #4ee6d8;
+      color: #23272f;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 36px;
+      font-size: 1.1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      box-shadow: 0 2px 12px rgba(78,230,216,0.18);
+    }
+    .start-btn:hover {
+      background: #3ed0c2;
+    }
+    @media (max-width: 500px) {
+      .waveform {
+        width: 90vw;
+        height: 80px;
+      }
+      .call-btn {
+        width: 90vw;
+        font-size: 1rem;
+        padding: 14px 0;
+      }
+      .precall-box {
+        min-width: 0;
+        width: 90vw;
+        padding: 24px 8vw 24px 8vw;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="precall-overlay" id="precallOverlay">
+    <div class="precall-box">
+      <div class="precall-title">Pilih Mode Panggilan</div>
+      <select class="mode-picker" id="modePicker">
+        <option value="inbound">Inbound</option>
+        <option value="outbound">Outbound</option>
+        <option value="free">Free</option>
+      </select>
+      <button class="start-btn" id="startCallBtn">Mulai Panggilan</button>
+      <a href="/static/dashboard.html" target="_blank" style="margin-top:18px;color:#4ee6d8;text-decoration:underline;font-size:1rem;">Lihat Ringkasan (Summary)</a>
+    </div>
+  </div>
+  <div class="center-box" id="callUI" style="display:none;">
+    <svg class="waveform" viewBox="0 0 340 120">
+      <g id="bars">
+        <!-- 32 bars -->
+        <rect x="0"   y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="11"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="22"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="33"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="44"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="55"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="66"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="77"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="88"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="99"  y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="110" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="121" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="132" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="143" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="154" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="165" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="176" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="187" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="198" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="209" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="220" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="231" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="242" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="253" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="264" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="275" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="286" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="297" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="308" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="319" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+        <rect x="330" y="60" width="6" height="0" rx="3" fill="#4ee6d8"/>
+      </g>
+    </svg>
+    <button class="call-btn" id="endCallBtn">
+      <span class="pause-icon">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="5" y="4" width="4" height="14" rx="2" fill="#fff"/>
+          <rect x="13" y="4" width="4" height="14" rx="2" fill="#fff"/>
+        </svg>
+      </span>
+      Akhiri Panggilan
+    </button>
+    <div id="summaryLink" style="display:none;margin-top:24px;">
+      <a href="/static/dashboard.html" target="_blank" style="color:#4ee6d8;text-decoration:underline;font-size:1rem;">Lihat Ringkasan (Summary)</a>
+    </div>
+  </div>
+  <div id="connectingMsg" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:9;display:flex;align-items:center;justify-content:center;background:rgba(35,39,47,0.98);color:#4ee6d8;font-size:1.3rem;font-weight:600;letter-spacing:0.01em;">
+    <div>Menghubungkan ke bot...</div>
+  </div>
+  <script>
+    // Pre-call logic
+    const precallOverlay = document.getElementById('precallOverlay');
+    const startCallBtn = document.getElementById('startCallBtn');
+    const modePicker = document.getElementById('modePicker');
+    let selectedMode = 'inbound';
+    modePicker.onchange = (e) => { selectedMode = e.target.value; };
+    startCallBtn.onclick = () => {
+      precallOverlay.style.display = 'none';
+      document.getElementById('connectingMsg').style.display = 'flex';
+      startCall();
+    };
+
+    // Show summary link at end
+    const summaryLink = document.getElementById('summaryLink');
+    const callUI = document.getElementById('callUI');
+    const connectingMsg = document.getElementById('connectingMsg');
+
+    // Dynamic waveform animation (mic input)
+    const bars = document.querySelectorAll('#bars rect');
+    let audioContext, analyser, micSource, dataArray, animationId;
+    function animateWaveform() {
+      if (!analyser) return;
+      analyser.getByteTimeDomainData(dataArray);
+      for (let i = 0; i < bars.length; i++) {
+        // Map waveform data to bar height
+        const v = dataArray[Math.floor(i * dataArray.length / bars.length)] / 128.0 - 1.0;
+        const h = 40 + 60 * Math.abs(v);
+        bars[i].setAttribute('y', (60 - h/2).toString());
+        bars[i].setAttribute('height', h.toString());
+      }
+      animationId = requestAnimationFrame(animateWaveform);
+    }
+
+    // WebRTC logic
+    let pc = null;
+    let localStream = null;
+    let callActive = false;
+    const endCallBtn = document.getElementById('endCallBtn');
+
+    async function startCall() {
+      if (callActive) return;
+      callActive = true;
+      endCallBtn.disabled = false;
+      endCallBtn.textContent = 'End Call & Analysis';
+      try {
+        // Get user mic
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
+          video: false
+        });
+        // Setup waveform animation from mic
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        micSource = audioContext.createMediaStreamSource(localStream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 64;
+        dataArray = new Uint8Array(analyser.fftSize);
+        micSource.connect(analyser);
+        animateWaveform();
+        // Create peer connection
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+        // Add tracks
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        // Play remote audio
+        pc.ontrack = (event) => {
+          const audio = document.createElement('audio');
+          audio.srcObject = event.streams[0];
+          audio.autoplay = true;
+          audio.play();
+        };
+        // Create offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        // Send offer to backend (include mode if needed)
+        const response = await fetch('/api/offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sdp: offer.sdp,
+            type: 'offer',
+            pc_id: Date.now().toString(),
+            mode: selectedMode
+          })
+        });
+        const data = await response.json();
+        if (data.sdp) {
+          await pc.setRemoteDescription(new RTCSessionDescription(data));
+          // Show call UI only after answer received
+          connectingMsg.style.display = 'none';
+          callUI.style.display = 'flex';
+        }
+      } catch (err) {
+        endCallBtn.textContent = 'Mic/Call Error';
+        endCallBtn.disabled = true;
+        callActive = false;
+        connectingMsg.style.display = 'none';
+      }
+    }
+
+    endCallBtn.onclick = function() {
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+      }
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+      endCallBtn.disabled = true;
+      endCallBtn.textContent = 'Call Ended';
+      callActive = false;
+      summaryLink.style.display = 'block';
+      callUI.style.display = 'none';
+      setTimeout(() => { window.location.href = '/static/dashboard.html'; }, 800);
+    };
+  </script>
+</body>
+</html> 
