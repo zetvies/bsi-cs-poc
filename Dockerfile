@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11
 
 WORKDIR /app
 
@@ -8,14 +8,6 @@ RUN apt-get update && apt-get install -y \
     g++ \
     libgl1-mesa-glx \
     libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libgomp1 \
-    libgthread-2.0-0 \
-    libjpeg-dev \
-    libpng-dev \
-    libtiff-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
