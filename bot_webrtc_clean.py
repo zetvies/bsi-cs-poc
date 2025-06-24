@@ -236,11 +236,42 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'."""
         api_key=os.getenv("ELEVEN_API_KEY"),
         voice_id=os.getenv("ELEVEN_VOICE_ID"),
     )
+    
+    # Add TTS debugging
+    logger.info(f"✅ Using TTS service: {type(tts).__name__}")
+    logger.info(f"✅ TTS service ID: {id(tts)}")
+    logger.info(f"✅ TTS API Key: {'✅ Set' if os.getenv('ELEVEN_API_KEY') else '❌ Not set'}")
+    logger.info(f"✅ TTS Voice ID: {'✅ Set' if os.getenv('ELEVEN_VOICE_ID') else '❌ Not set'}")
+    
+    @tts.event_handler("on_tts_start")
+    async def on_tts_start(tts, text):
+        logger.info(f"🔊 TTS Started: '{text}'")
+    
+    @tts.event_handler("on_tts_end")
+    async def on_tts_end(tts, audio):
+        logger.info(f"🔊 TTS Ended: {len(audio) if audio else 0} bytes of audio")
+    
+    @tts.event_handler("on_tts_error")
+    async def on_tts_error(tts, error):
+        logger.error(f"🔊 TTS Error: {error}")
 
     llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         model="gpt-4o-mini",
     )
+    
+    # Add LLM debugging
+    logger.info(f"✅ Using LLM service: {type(llm).__name__}")
+    logger.info(f"✅ LLM service ID: {id(llm)}")
+    logger.info(f"✅ LLM model: gpt-4o-mini")
+    
+    @llm.event_handler("on_llm_response")
+    async def on_llm_response(llm, response):
+        logger.info(f"🤖 LLM Response: '{response.content}'")
+    
+    @llm.event_handler("on_llm_error")
+    async def on_llm_error(llm, error):
+        logger.error(f"🤖 LLM Error: {error}")
 
     # Audio buffer processor for recording
     audiobuffer = AudioBufferProcessor(user_continuous_stream=True)

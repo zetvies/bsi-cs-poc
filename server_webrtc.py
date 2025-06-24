@@ -88,6 +88,7 @@ async def call_page():
 @app.post("/api/offer")
 async def offer(request: dict, background_tasks: BackgroundTasks):
     pc_id = request.get("pc_id")
+    mode = request.get("mode", "inbound")  # Get mode from request, default to "inbound"
 
     if pc_id and pc_id in pcs_map:
         pipecat_connection = pcs_map[pc_id]
@@ -106,8 +107,8 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
             logger.info(f"Discarding peer connection for pc_id: {webrtc_connection.pc_id}")
             pcs_map.pop(webrtc_connection.pc_id, None)
 
-        # Run bot function with SmallWebRTC connection
-        background_tasks.add_task(run_bot, pipecat_connection, getattr(app.state, 'testing', False))
+        # Run bot function with proper mode string
+        background_tasks.add_task(run_bot, pipecat_connection, mode)
 
     answer = pipecat_connection.get_answer()
     # Updating the peer connection inside the map
