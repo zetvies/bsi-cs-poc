@@ -185,10 +185,10 @@ async def run_bot(webrtc_connection: SmallWebRTCConnection, mode="inbound"):
         ),
     )
 
-    # Use EXACTLY the same STT configuration as the working Twilio version
+    # STT Service with retry logic
     stt = OpenAISTTService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-transcribe",  # Using the latest GPT-4o transcription model
+        model="whisper-1",  # Using stable whisper-1 instead of gpt-4o-transcribe
         language=Language.ID,  # Indonesian language
         temperature=0.0,  # For more accurate transcription
         prompt="""Transcribe accurately in Bahasa Indonesia, especially for banking and financial terms. 
@@ -205,7 +205,10 @@ Important terms to transcribe correctly:
 - DP (Down Payment)
 - Biaya tahunan
 
-Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'."""
+Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'.""",
+        # Add retry configuration
+        max_retries=3,
+        retry_delay=1.0,
     )
     
     # Force the STT service to be used
@@ -400,7 +403,7 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'."""
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
         server_name = f"webrtc_server_{webrtc_connection.pc_id}"
         await save_audio(server_name, audio, sample_rate, num_channels)
-        logger.debug(f"💾 Recording audio: {len(audio)} bytes, {sample_rate}Hz, {num_channels} channels")
+        logger.debug(f"�� Recording audio: {len(audio)} bytes, {sample_rate}Hz, {num_channels} channels")
     
     # Register transcript update handler for Supabase
     @transcript.event_handler("on_transcript_update")
