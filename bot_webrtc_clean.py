@@ -565,14 +565,14 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'.""",
         "2. Tanyakan kebutuhan nasabah dengan sopan\n"
         "3. Jelaskan promo yang relevan dengan kebutuhan mereka\n"
         "4. Hindari karakter khusus dalam jawaban karena akan dikonversi ke audio\n"
-        "5. Berikan jawaban yang singkat, jelas, dan informatif\n"
-        "6. Jika nasabah tertarik, tanyakan nama dan nomor telepon untuk follow-up\n\n"
+        "5. Berikan jawaban yang singkat, efisien, jelas, dan informatif\n"
+        "6. Jangan memanggil nama nasabah. Jika anda bisa membedakan jenis kelamin, maka anda bisa memanggilnya dengan 'Pak' atau 'Bu' sesuai dengan jenis kelamin nasabah. Jika tidak bisa membedakan, maka anda bisa memanggilnya dengan 'Mas' atau 'Mba'.\n"
         "Ingat: Anda adalah perwakilan BSI Syariah, jadi selalu jaga etika dan profesionalisme dalam setiap percakapan."
     )
 
     # Set system prompt and forced first assistant message based on mode
     if mode == "inbound":
-        opening = "Assalamualaikum, selamat datang di layanan customer service BSI Syariah. Perkenalkan saya Melina dari customer service BSI Syariah. Silakan sampaikan kebutuhan Anda."
+        opening = "Assalamualaikum, selamat datang di layanan customer service BSI Syariah. Perkenalkan saya Melina dari customer service BSI Syariah. Ada yang bisa kami bantu?"
         system_prompt = opening + "\n\n" + detailed_prompt
         first_assistant = opening
     elif mode == "outbound":
@@ -580,7 +580,7 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'.""",
         system_prompt = opening + "\n\n" + detailed_prompt
         first_assistant = opening
     elif mode == "free":
-        opening = "Assalamualaikum, perkenalkan saya Melina dari customer service BSI Syariah. Silakan mulai percakapan dengan asisten BSI Syariah."
+        opening = "Assalamualaikum, perkenalkan saya Melina dari customer service BSI Syariah. Ada yang bisa kami bantu?."
         system_prompt = opening + "\n\n" + detailed_prompt
         first_assistant = opening
     else:
