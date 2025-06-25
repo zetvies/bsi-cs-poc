@@ -4,20 +4,23 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 
+import argparse
 import asyncio
-import os
 import datetime
 import io
+import json
+import os
 import sys
 import wave
-import json
+import re
 from contextlib import asynccontextmanager
 from typing import Dict
 
+import aiofiles
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, WebSocket
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pipecat_ai_small_webrtc_prebuilt.frontend import SmallWebRTCPrebuiltUI
@@ -39,7 +42,14 @@ from pipecat.transports.network.small_webrtc import SmallWebRTCTransport
 from pipecat.transports.network.webrtc_connection import IceServer, SmallWebRTCConnection
 from pipecat.transcriptions.language import Language
 
-import aiofiles
+import sqlite3
+from pathlib import Path
+
+# Try to import openai, but don't fail if not available
+try:
+    import openai
+except ImportError:
+    openai = None
 
 load_dotenv(override=True)
 
@@ -51,24 +61,33 @@ app = FastAPI()
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Initialize Supabase client
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_KEY")
+# Initialize SQLite database
+def init_database():
+    """Initialize SQLite database and create tables if they don't exist"""
+    db_path = Path("transcriptions.db")
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Create transcriptions table (no audio_file column)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transcriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            transcription_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Remove audio_file column if it exists (SQLite doesn't support DROP COLUMN directly, so skip for now)
+    # If you want to fully remove it, you need to recreate the table and copy data.
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"✅ SQLite database initialized at {db_path}")
 
-# Debug environment variables
-logger.info(f"🔍 Environment check:")
-logger.info(f"   SUPABASE_URL: {'✅ Set' if supabase_url else '❌ Not set'}")
-logger.info(f"   SUPABASE_KEY: {'✅ Set' if supabase_key else '❌ Not set'}")
-logger.info(f"   OPENAI_API_KEY: {'✅ Set' if os.getenv('OPENAI_API_KEY') else '❌ Not set'}")
-logger.info(f"   ELEVEN_API_KEY: {'✅ Set' if os.getenv('ELEVEN_API_KEY') else '❌ Not set'}")
-
-supabase: Client = None
-
-if supabase_url and supabase_key:
-    supabase = create_client(supabase_url, supabase_key)
-    logger.info("✅ Supabase client initialized")
-else:
-    logger.warning("⚠️ Supabase credentials not found. Transcriptions will not be saved to database.")
+# Initialize database on startup
+init_database()
 
 # Store connections by pc_id
 pcs_map: Dict[str, SmallWebRTCConnection] = {}
@@ -82,21 +101,22 @@ ice_servers = [
 # Mount the frontend at /
 app.mount("/client", SmallWebRTCPrebuiltUI)
 
-
-class SupabaseTranscriptHandler:
-    """Handles saving transcriptions to Supabase database."""
+class SQLiteTranscriptHandler:
+    """Handles saving transcriptions to SQLite database."""
     
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.messages = []
         self.conversation_started = False
+        self.audio_file = None
+        
+    def set_audio_file(self, audio_file: str):
+        """Set the audio file name for this session."""
+        self.audio_file = audio_file
+        logger.info(f"✅ Updated audio filename for session {self.session_id}: {audio_file}")
         
     async def save_complete_conversation(self):
-        """Save the complete conversation as a JSON array to Supabase."""
-        if not supabase:
-            logger.warning("Supabase not configured, skipping complete conversation save")
-            return
-            
+        """Save the complete conversation as a JSON array to SQLite with processed data."""
         if not self.messages:
             logger.info("No messages to save")
             return
@@ -110,21 +130,255 @@ class SupabaseTranscriptHandler:
                     "content": msg.content
                 })
             
-            # Format messages as JSON array
-            conversation_json = json.dumps(messages_dict, ensure_ascii=False, indent=2)
+            # Always generate an audio filename when saving (even if no audio was recorded)
+            if not self.audio_file:
+                self.audio_file = f"recording_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.wav"
+                logger.info(f"✅ Generated audio filename for session {self.session_id}: {self.audio_file}")
             
-            # Prepare data for Supabase
-            transcription_data = {
-                "transcription_json": conversation_json
-            }
+            logger.info(f"🔍 About to process conversation data with audio_file: {self.audio_file}")
             
-            # Insert into iykra_transcriptions table
-            result = supabase.table("iykra_transcriptions").insert(transcription_data).execute()
-            logger.info(f"✅ Complete conversation saved to Supabase: {len(self.messages)} messages")
-            logger.debug(f"✅ Conversation JSON: {conversation_json[:200]}...")
+            # Process the conversation data (including audio_file)
+            processed_data = await self.process_conversation_data(messages_dict, self.audio_file)
+            logger.info(f"✅ Adding audio file to transcription: {self.audio_file}")
+            logger.info(f"🔍 Processed data keys: {list(processed_data.keys())}")
+            logger.info(f"🔍 Audio file in processed_data: {processed_data.get('audio_file')}")
+            
+            # Save to SQLite
+            conn = sqlite3.connect("transcriptions.db")
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO transcriptions (session_id, transcription_json)
+                VALUES (?, ?)
+            ''', (self.session_id, json.dumps(processed_data, ensure_ascii=False, indent=2)))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"✅ Complete conversation saved to SQLite: {len(self.messages)} messages with processed data")
+            logger.info(f"✅ Audio file saved to JSON: {self.audio_file}")
+            logger.debug(f"✅ Processed data: {json.dumps(processed_data, ensure_ascii=False)[:200]}...")
             
         except Exception as e:
-            logger.error(f"❌ Error saving complete conversation to Supabase: {e}")
+            logger.error(f"❌ Error saving complete conversation to SQLite: {e}")
+    
+    async def process_conversation_data(self, messages, audio_file=None):
+        """Process conversation data to extract sentiment, summary, and other analytics."""
+        try:
+            # Get user messages for analysis
+            user_messages = [msg for msg in messages if msg['role'] == 'user']
+            user_text = '\n'.join([msg['content'] for msg in user_messages])
+            
+            # Check if we have enough user content to analyze
+            if not user_text.strip():
+                logger.warning("No user content to analyze, returning basic data")
+                return {
+                    "messages": messages,
+                    "message_count": len(messages),
+                    "user_message_count": len(user_messages),
+                    "audio_file": audio_file
+                }
+            
+            # Analyze sentiment
+            sentiment = await self.analyze_sentiment(user_text)
+            
+            # Generate summary
+            summary = await self.generate_summary(user_text)
+            
+            # Check if analysis was successful
+            if not self.is_analysis_successful(sentiment, summary):
+                logger.warning("Analysis failed or returned default values, returning basic data")
+                return {
+                    "messages": messages,
+                    "message_count": len(messages),
+                    "user_message_count": len(user_messages),
+                    "audio_file": audio_file
+                }
+            
+            # Calculate other metrics
+            disposition = self.determine_disposition(messages)
+            compliance = self.check_sharia_compliance(messages)
+            lead_intent = self.detect_lead_intent(messages)
+            total_score = self.calculate_total_score(sentiment['score'], compliance, lead_intent)
+            
+            return {
+                "messages": messages,
+                "sentiment": sentiment,
+                "summary": summary,
+                "disposition": disposition,
+                "compliance": compliance,
+                "lead_intent": lead_intent,
+                "total_score": total_score,
+                "message_count": len(messages),
+                "user_message_count": len(user_messages),
+                "audio_file": audio_file
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing conversation data: {e}")
+            # Return basic data if processing fails
+            return {
+                "messages": messages,
+                "message_count": len(messages),
+                "user_message_count": len([msg for msg in messages if msg['role'] == 'user']),
+                "audio_file": audio_file
+            }
+    
+    def is_analysis_successful(self, sentiment, summary):
+        """Check if the analysis was actually successful and not just default values."""
+        # Check if sentiment analysis was successful
+        sentiment_successful = (
+            sentiment and 
+            isinstance(sentiment, dict) and
+            sentiment.get('sentiment') in ['positive', 'negative', 'neutral'] and
+            isinstance(sentiment.get('score'), (int, float)) and
+            0 <= sentiment.get('score', 0) <= 100
+        )
+        
+        # Check if summary was successful
+        summary_successful = (
+            summary and 
+            isinstance(summary, dict) and
+            summary.get('interest_summary') and 
+            summary.get('interest_summary') != "Minat pelanggan perlu dianalisis lebih lanjut" and
+            summary.get('followup_recommendation') and
+            summary.get('followup_recommendation') != "Hubungi kembali pelanggan untuk informasi lebih detail"
+        )
+        
+        return sentiment_successful and summary_successful
+    
+    async def analyze_sentiment(self, user_text):
+        """Analyze sentiment using OpenAI."""
+        try:
+            if not openai:
+                logger.warning("OpenAI not available, using default sentiment")
+                return {"sentiment": "neutral", "score": 50}
+                
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Analyze the sentiment of this conversation and return a JSON object with a 'sentiment' field (positive, neutral, or negative) and a 'score' field (0-100)."
+                    },
+                    {
+                        "role": "user",
+                        "content": user_text
+                    }
+                ]
+            )
+            
+            analysis = json.loads(response.choices[0].message.content)
+            return {
+                "sentiment": analysis.get("sentiment", "neutral"),
+                "score": analysis.get("score", 50)
+            }
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment: {e}")
+            return {"sentiment": "neutral", "score": 50}
+    
+    async def generate_summary(self, user_text):
+        """Generate summary using OpenAI."""
+        try:
+            if not openai:
+                logger.warning("OpenAI not available, using default summary")
+                return {
+                    "interest_summary": "Minat pelanggan perlu dianalisis lebih lanjut",
+                    "followup_recommendation": "Hubungi kembali pelanggan untuk informasi lebih detail"
+                }
+                
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            prompt = f"""
+You are a customer service assistant. Given the following conversation, summarize the customer's interest in 1-2 sentences, and give a specific, actionable follow-up recommendation in Bahasa Indonesia. 
+Selalu kembalikan JSON object dengan dua field:
+- interest_summary (ringkasan minat pelanggan)
+- followup_recommendation (tindakan lanjutan yang spesifik, misal: 'Hubungi kembali dengan detail program KPR').
+
+Contoh output:
+{{
+  "interest_summary": "Pelanggan tertarik dengan produk KPR BSI Syariah.",
+  "followup_recommendation": "Hubungi kembali pelanggan dan berikan detail program KPR."
+}}
+
+Conversation:
+{user_text}
+"""
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            summary = json.loads(response.choices[0].message.content)
+            return {
+                "interest_summary": summary.get("interest_summary", "Minat pelanggan perlu dianalisis lebih lanjut"),
+                "followup_recommendation": summary.get("followup_recommendation", "Hubungi kembali pelanggan untuk informasi lebih detail")
+            }
+        except Exception as e:
+            logger.error(f"Error generating summary: {e}")
+            return {
+                "interest_summary": "Minat pelanggan perlu dianalisis lebih lanjut",
+                "followup_recommendation": "Hubungi kembali pelanggan untuk informasi lebih detail"
+            }
+    
+    def determine_disposition(self, messages):
+        """Determine call disposition based on messages."""
+        has_phone_number = any(
+            msg['role'] == 'user' and re.search(r'\d{10,}', msg['content'])
+            for msg in messages
+        )
+        has_interest = any(
+            msg['role'] == 'user' and 
+            ('tertarik' in msg['content'].lower() or 'ya' in msg['content'].lower())
+            for msg in messages
+        )
+        
+        if has_phone_number and has_interest:
+            return 'success'
+        elif has_interest:
+            return 'followup'
+        else:
+            return 'rejected'
+    
+    def check_sharia_compliance(self, messages):
+        """Check for sharia compliance keywords."""
+        keywords = [r'riba', r'gharar', r'maysir', r'judi', r'bunga', r'haram']
+        all_text = ' '.join([msg['content'] for msg in messages])
+        
+        for keyword in keywords:
+            if re.search(keyword, all_text, re.IGNORECASE):
+                return 'Flag'
+        return 'Pass'
+    
+    def detect_lead_intent(self, messages):
+        """Detect lead intent from conversation."""
+        triggers = [
+            {'tag': 'KPR', 'regex': r'kpr|kredit pemilikan rumah|mortgage'},
+            {'tag': 'Tabungan', 'regex': r'tabungan|rekening baru|open account'},
+            {'tag': 'Deposito', 'regex': r'deposito'},
+            {'tag': 'Kartu Kredit', 'regex': r'kartu kredit|credit card'}
+        ]
+        
+        all_text = ' '.join([msg['content'] for msg in messages])
+        for trigger in triggers:
+            if re.search(trigger['regex'], all_text, re.IGNORECASE):
+                return trigger['tag']
+        return 'None'
+    
+    def calculate_total_score(self, sentiment_score, compliance, lead_intent):
+        """Calculate total conversation score."""
+        s = sentiment_score / 100
+        c = 1 if compliance == 'Pass' else 0
+        l = 1 if lead_intent != 'None' else 0
+        return round(s * 40 + c * 30 + l * 30)
     
     async def on_transcript_update(self, processor: TranscriptProcessor, frame: TranscriptionUpdateFrame):
         """Handle new transcript messages."""
@@ -135,10 +389,14 @@ class SupabaseTranscriptHandler:
 
 
 async def save_audio(server_name: str, audio: bytes, sample_rate: int, num_channels: int):
+    logger.info(f"🎤 save_audio called: {len(audio)} bytes, {sample_rate}Hz, {num_channels} channels")
+    
+    # Always generate filename in the required format
+    filename = f"recording_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.wav"
+    logger.info(f"🎤 Generated audio filename: {filename}")
+    
     if len(audio) > 0:
-        filename = (
-            f"{server_name}_recording_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        )
+        logger.info(f"🎤 Creating audio file: {filename}")
         with io.BytesIO() as buffer:
             with wave.open(buffer, "wb") as wf:
                 wf.setsampwidth(2)
@@ -147,9 +405,12 @@ async def save_audio(server_name: str, audio: bytes, sample_rate: int, num_chann
                 wf.writeframes(audio)
             async with aiofiles.open(filename, "wb") as file:
                 await file.write(buffer.getvalue())
-        logger.info(f"Merged audio saved to {filename}")
+        logger.info(f"✅ Merged audio saved to {filename}")
     else:
-        logger.info("No audio data to save")
+        logger.warning("⚠️ No audio data to save - audio buffer is empty, but filename generated")
+    
+    # Always return the filename
+    return filename
 
 
 async def run_bot(webrtc_connection: SmallWebRTCConnection, mode="inbound"):
@@ -282,9 +543,9 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'.""",
     # Transcript processor for Supabase storage
     transcript = TranscriptProcessor()
     
-    # Create Supabase transcript handler with session ID
+    # Create SQLite transcript handler with session ID
     session_id = f"webrtc_{webrtc_connection.pc_id}"
-    transcript_handler = SupabaseTranscriptHandler(session_id)
+    transcript_handler = SQLiteTranscriptHandler(session_id)
 
     # Full detailed system prompt (context, rules, promo)
     detailed_prompt = (
@@ -382,7 +643,7 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'.""",
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
-        # Save complete conversation to Supabase
+        # Save complete conversation to SQLite
         await transcript_handler.save_complete_conversation()
         await task.cancel()
     
@@ -402,10 +663,12 @@ Please transcribe BSI Syariah exactly as spoken, not as 'Bank Sentral'.""",
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
         server_name = f"webrtc_server_{webrtc_connection.pc_id}"
-        await save_audio(server_name, audio, sample_rate, num_channels)
-        logger.debug(f"�� Recording audio: {len(audio)} bytes, {sample_rate}Hz, {num_channels} channels")
+        filename = await save_audio(server_name, audio, sample_rate, num_channels)
+        transcript_handler.set_audio_file(filename)
+        logger.info(f"✅ Audio file set for session {session_id}: {filename}")
+        logger.debug(f"🎤 Recording audio: {len(audio)} bytes, {sample_rate}Hz, {num_channels} channels")
     
-    # Register transcript update handler for Supabase
+    # Register transcript update handler for SQLite
     @transcript.event_handler("on_transcript_update")
     async def on_transcript_update(processor, frame):
         await transcript_handler.on_transcript_update(processor, frame)
@@ -462,9 +725,98 @@ async def lifespan(app: FastAPI):
     pcs_map.clear()
 
 
+@app.get("/api/transcriptions")
+async def get_transcriptions():
+    """Get all transcriptions from SQLite database"""
+    try:
+        conn = sqlite3.connect("transcriptions.db")
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, session_id, transcription_json, created_at 
+            FROM transcriptions 
+            ORDER BY created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        transcriptions = []
+        for row in rows:
+            transcription_id, session_id, transcription_json, created_at = row
+            try:
+                messages = json.loads(transcription_json)
+                audio_file = messages.get("audio_file")
+                transcriptions.append({
+                    "id": transcription_id,
+                    "session_id": session_id,
+                    "messages": messages,
+                    "audio_file": audio_file,
+                    "created_at": created_at,
+                    "message_count": len(messages.get('messages', []))
+                })
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse JSON for transcription {transcription_id}")
+                continue
+        
+        return {"transcriptions": transcriptions}
+        
+    except Exception as e:
+        logger.error(f"Error fetching transcriptions: {e}")
+        return {"error": "Failed to fetch transcriptions"}
+
+@app.get("/api/transcriptions/{transcription_id}")
+async def get_transcription(transcription_id: int):
+    """Get a specific transcription by ID"""
+    try:
+        conn = sqlite3.connect("transcriptions.db")
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT session_id, transcription_json, created_at 
+            FROM transcriptions 
+            WHERE id = ?
+        ''', (transcription_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            session_id, transcription_json, created_at = row
+            messages = json.loads(transcription_json)
+            audio_file = messages.get("audio_file")
+            return {
+                "id": transcription_id,
+                "session_id": session_id,
+                "messages": messages,
+                "audio_file": audio_file,
+                "created_at": created_at
+            }
+        else:
+            return {"error": "Transcription not found"}
+            
+    except Exception as e:
+        logger.error(f"Error fetching transcription {transcription_id}: {e}")
+        return {"error": "Failed to fetch transcription"}
+
+@app.get("/audio/{filename}")
+async def get_audio_file(filename: str):
+    """Serve audio files"""
+    try:
+        file_path = Path(filename)
+        if file_path.exists() and file_path.suffix.lower() == '.wav':
+            return FileResponse(
+                path=file_path,
+                media_type='audio/wav',
+                filename=filename
+            )
+        else:
+            return {"error": "Audio file not found"}
+    except Exception as e:
+        logger.error(f"Error serving audio file {filename}: {e}")
+        return {"error": "Failed to serve audio file"}
+
 if __name__ == "__main__":
-    import argparse
-    
     parser = argparse.ArgumentParser(description="BSI Syariah WebRTC Bot")
     parser.add_argument(
         "--host", default="localhost", help="Host for HTTP server (default: localhost)"

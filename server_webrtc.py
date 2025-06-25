@@ -8,13 +8,16 @@
 import argparse
 import asyncio
 import os
+import json
+import sqlite3
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -24,6 +27,31 @@ from pipecat.transports.network.webrtc_connection import IceServer, SmallWebRTCC
 load_dotenv(override=True)
 
 app = FastAPI()
+
+# Initialize SQLite database
+def init_database():
+    """Initialize SQLite database and create tables if they don't exist"""
+    db_path = Path("transcriptions.db")
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Create transcriptions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transcriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            transcription_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"✅ SQLite database initialized at {db_path}")
+
+# Initialize database on startup
+init_database()
 
 # Store connections by pc_id
 pcs_map: Dict[str, SmallWebRTCConnection] = {}
@@ -115,6 +143,157 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     pcs_map[answer["pc_id"]] = pipecat_connection
 
     return answer
+
+
+@app.get("/api/transcriptions")
+async def get_transcriptions():
+    """Get all transcriptions from SQLite database"""
+    try:
+        conn = sqlite3.connect("transcriptions.db")
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, session_id, transcription_json, created_at 
+            FROM transcriptions 
+            ORDER BY created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        transcriptions = []
+        for row in rows:
+            transcription_id, session_id, transcription_json, created_at = row
+            try:
+                processed_data = json.loads(transcription_json)
+                
+                # Handle both old format (just messages) and new format (processed data)
+                if isinstance(processed_data, list):
+                    # Old format - just messages array
+                    messages = processed_data
+                    transcriptions.append({
+                        "id": transcription_id,
+                        "session_id": session_id,
+                        "messages": messages,
+                        "created_at": created_at,
+                        "message_count": len(messages)
+                    })
+                else:
+                    # New format - processed data (may or may not have analytics)
+                    transcriptions.append({
+                        "id": transcription_id,
+                        "session_id": session_id,
+                        "messages": processed_data.get("messages", []),
+                        "created_at": created_at,
+                        "message_count": processed_data.get("message_count", 0),
+                        "sentiment": processed_data.get("sentiment"),
+                        "summary": processed_data.get("summary"),
+                        "disposition": processed_data.get("disposition"),
+                        "compliance": processed_data.get("compliance"),
+                        "lead_intent": processed_data.get("lead_intent"),
+                        "total_score": processed_data.get("total_score"),
+                        "audio_file": processed_data.get("audio_file")
+                    })
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse JSON for transcription {transcription_id}")
+                continue
+        
+        return {"transcriptions": transcriptions}
+        
+    except Exception as e:
+        logger.error(f"Error fetching transcriptions: {e}")
+        return {"error": "Failed to fetch transcriptions"}
+
+
+@app.get("/api/transcriptions/{transcription_id}")
+async def get_transcription(transcription_id: int):
+    """Get a specific transcription by ID"""
+    try:
+        conn = sqlite3.connect("transcriptions.db")
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT session_id, transcription_json, created_at 
+            FROM transcriptions 
+            WHERE id = ?
+        ''', (transcription_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            session_id, transcription_json, created_at = row
+            processed_data = json.loads(transcription_json)
+            
+            # Handle both old format (just messages) and new format (processed data)
+            if isinstance(processed_data, list):
+                # Old format - just messages array
+                messages = processed_data
+                return {
+                    "id": transcription_id,
+                    "session_id": session_id,
+                    "messages": messages,
+                    "created_at": created_at
+                }
+            else:
+                # New format - processed data
+                return {
+                    "id": transcription_id,
+                    "session_id": session_id,
+                    "messages": processed_data,
+                    "audio_file": processed_data.get("audio_file"),
+                    "created_at": created_at
+                }
+        else:
+            return {"error": "Transcription not found"}
+            
+    except Exception as e:
+        logger.error(f"Error fetching transcription {transcription_id}: {e}")
+        return {"error": "Failed to fetch transcription"}
+
+
+@app.delete("/api/transcriptions/{transcription_id}")
+async def delete_transcription(transcription_id: int):
+    """Delete a specific transcription by ID"""
+    try:
+        conn = sqlite3.connect("transcriptions.db")
+        cursor = conn.cursor()
+        
+        # Check if transcription exists
+        cursor.execute('SELECT id FROM transcriptions WHERE id = ?', (transcription_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return {"error": "Transcription not found"}
+        
+        # Delete the transcription
+        cursor.execute('DELETE FROM transcriptions WHERE id = ?', (transcription_id,))
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"✅ Transcription {transcription_id} deleted successfully")
+        return {"success": True, "message": f"Transcription {transcription_id} deleted successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error deleting transcription {transcription_id}: {e}")
+        return {"error": "Failed to delete transcription"}
+
+
+@app.get("/audio/{filename}")
+async def get_audio_file(filename: str):
+    """Serve audio files"""
+    try:
+        file_path = Path(filename)
+        if file_path.exists() and file_path.suffix.lower() == '.wav':
+            return FileResponse(
+                path=file_path,
+                media_type='audio/wav',
+                filename=filename
+            )
+        else:
+            return {"error": "Audio file not found"}
+    except Exception as e:
+        logger.error(f"Error serving audio file {filename}: {e}")
+        return {"error": "Failed to serve audio file"}
 
 
 @asynccontextmanager
