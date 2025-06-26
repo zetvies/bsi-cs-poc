@@ -230,9 +230,12 @@ class SQLiteTranscriptHandler:
         sentiment_successful = (
             sentiment and 
             isinstance(sentiment, dict) and
-            sentiment.get('sentiment') in ['positive', 'negative', 'neutral'] and
+            sentiment.get('sentiment') and 
+            isinstance(sentiment.get('sentiment'), str) and
+            '(' in sentiment.get('sentiment', '') and
+            ')' in sentiment.get('sentiment', '') and
             isinstance(sentiment.get('score'), (int, float)) and
-            0 <= sentiment.get('score', 0) <= 100
+            -1.0 <= sentiment.get('score', 0) <= 1.0
         )
         
         # Check if summary was successful
@@ -252,7 +255,7 @@ class SQLiteTranscriptHandler:
         try:
             if not openai:
                 logger.warning("OpenAI not available, using default sentiment")
-                return {"sentiment": "neutral", "score": 50}
+                return {"sentiment": "Neutral (0.0)"}
                 
             client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             
@@ -261,7 +264,7 @@ class SQLiteTranscriptHandler:
                 messages=[
                     {
                         "role": "system",
-                        "content": "Analyze the sentiment of this conversation and return a JSON object with a 'sentiment' field (positive, neutral, or negative) and a 'score' field (0-100)."
+                        "content": "Analyze the sentiment of this conversation and return a JSON object with a 'sentiment' field (positive, neutral, or negative) and a 'score' field (-1.0 to 1.0)."
                     },
                     {
                         "role": "user",
@@ -271,13 +274,20 @@ class SQLiteTranscriptHandler:
             )
             
             analysis = json.loads(response.choices[0].message.content)
+            sentiment_type = analysis.get("sentiment", "neutral")
+            score = analysis.get("score", 0.0)
+            
+            # Format sentiment as "Positive (0.5)", "Negative (-0.3)", "Neutral (0.0)"
+            sentiment_label = sentiment_type.capitalize()
+            formatted_sentiment = f"{sentiment_label} ({score:.1f})"
+            
             return {
-                "sentiment": analysis.get("sentiment", "neutral"),
-                "score": analysis.get("score", 50)
+                "sentiment": formatted_sentiment,
+                "score": score
             }
         except Exception as e:
             logger.error(f"Error analyzing sentiment: {e}")
-            return {"sentiment": "neutral", "score": 50}
+            return {"sentiment": "Neutral (0.0)", "score": 0.0}
     
     async def generate_summary(self, user_text):
         """Generate summary using OpenAI."""
@@ -355,8 +365,8 @@ Conversation:
         
         for keyword in keywords:
             if re.search(keyword, all_text, re.IGNORECASE):
-                return 'Flag'
-        return 'Pass'
+                return 'Non-Syariah'
+        return 'Syariah'
     
     def detect_lead_intent(self, messages):
         """Detect lead intent from conversation."""
@@ -375,8 +385,9 @@ Conversation:
     
     def calculate_total_score(self, sentiment_score, compliance, lead_intent):
         """Calculate total conversation score."""
-        s = sentiment_score / 100
-        c = 1 if compliance == 'Pass' else 0
+        # Convert sentiment score from -1.0 to 1.0 range to 0-100 range
+        s = (sentiment_score + 1.0) / 2.0  # Convert -1.0 to 1.0 to 0.0 to 1.0
+        c = 1 if compliance == 'Syariah' else 0  # Syariah compliance is better for scoring
         l = 1 if lead_intent != 'None' else 0
         return round(s * 40 + c * 30 + l * 30)
     
@@ -409,8 +420,55 @@ async def save_audio(server_name: str, audio: bytes, sample_rate: int, num_chann
     else:
         logger.warning("⚠️ No audio data to save - audio buffer is empty, but filename generated")
     
+    # Update the latest transcription entry with the audio file name
+    await update_latest_transcription_audio_file(filename)
+    
     # Always return the filename
     return filename
+
+
+async def update_latest_transcription_audio_file(audio_filename: str):
+    """Update the latest transcription entry with the audio file name."""
+    try:
+        conn = sqlite3.connect("transcriptions.db")
+        cursor = conn.cursor()
+        
+        # Get the latest transcription entry
+        cursor.execute('''
+            SELECT id, transcription_json 
+            FROM transcriptions 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        ''')
+        
+        row = cursor.fetchone()
+        if row:
+            transcription_id, transcription_json = row
+            
+            # Parse the existing JSON
+            transcription_data = json.loads(transcription_json)
+            
+            # Update the audio_file field
+            transcription_data['audio_file'] = audio_filename
+            
+            # Update the database with the new JSON
+            cursor.execute('''
+                UPDATE transcriptions 
+                SET transcription_json = ? 
+                WHERE id = ?
+            ''', (json.dumps(transcription_data, ensure_ascii=False, indent=2), transcription_id))
+            
+            conn.commit()
+            logger.info(f"✅ Updated latest transcription (ID: {transcription_id}) with audio file: {audio_filename}")
+        else:
+            logger.warning("⚠️ No transcription entries found to update with audio file")
+        
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"❌ Error updating latest transcription with audio file: {e}")
+        if 'conn' in locals():
+            conn.close()
 
 
 async def run_bot(webrtc_connection: SmallWebRTCConnection, mode="inbound"):
